@@ -1,1 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spotify Music Analytics & Recommendation</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.3/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#07100d;--card:#101b17;--card2:#15231e;--green:#1ed760;--text:#f4fff8;--muted:#a8b8b0;--line:#263a32}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(135deg,#07100d,#0b1712 50%,#07100d);color:var(--text)}
+header{padding:42px 7%;border-bottom:1px solid var(--line);background:rgba(5,13,10,.9);position:sticky;top:0;z-index:10;backdrop-filter:blur(10px)}
+h1{margin:0 0 8px;font-size:clamp(30px,4vw,54px)}.accent{color:var(--green)}header p{margin:0;color:var(--muted)}
+main{width:min(1250px,92%);margin:28px auto 70px}.toolbar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:22px}
+input,button{border:1px solid var(--line);background:var(--card);color:var(--text);padding:12px 14px;border-radius:10px;font-size:14px}
+input{min-width:260px;flex:1}button{cursor:pointer;background:var(--green);color:#041009;border-color:var(--green);font-weight:700}button.secondary{background:var(--card);color:var(--text);border-color:var(--line)}
+.status{color:var(--muted);margin:10px 0 22px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.metric{font-size:30px;font-weight:800;margin-top:5px}.label{color:var(--muted);font-size:13px}.section{margin-top:24px}.section h2{margin:0 0 14px;font-size:22px}
+.charts{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.chartbox{min-height:350px}.chartbox canvas{max-height:310px}
+.recommendations{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.song{padding:15px;border:1px solid var(--line);border-radius:12px;background:#0d1814}.song strong{display:block;margin-bottom:5px}.song span{color:var(--muted);font-size:13px}
+.tablewrap{overflow:auto;max-height:430px;border:1px solid var(--line);border-radius:12px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}th{position:sticky;top:0;background:#17251f}
+.corrwrap{overflow:auto}.corr{border-collapse:collapse;font-size:11px}.corr th,.corr td{padding:7px;text-align:center;min-width:82px}.corr th{position:static}.corr .rhead{text-align:left;white-space:nowrap}
+.badge{display:inline-block;padding:5px 8px;border-radius:999px;background:#193a2b;color:var(--green);font-size:12px}.error{color:#ff8f8f}
+footer{color:var(--muted);text-align:center;padding:30px}
+@media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.charts,.recommendations{grid-template-columns:1fr}}
+@media(max-width:550px){.grid{grid-template-columns:1fr}input{min-width:100%}}
+</style>
+</head>
+<body>
+<header>
+<h1>🎵 Spotify <span class="accent">Music Analytics</span></h1>
+<p>Genre segmentation • feature analysis • clustering • song recommendation</p>
+</header>
 
+<main>
+<div class="toolbar">
+<input id="search" placeholder="Search a song or artist..." disabled>
+<button id="recommendBtn" disabled>Recommend Songs</button>
+<button id="resetBtn" class="secondary">Reset</button>
+</div>
+<div id="status" class="status">Loading <b>spotify_dataset.csv</b>…</div>
+
+<div class="grid">
+<div class="card"><div class="label">Total Songs</div><div id="songs" class="metric">—</div></div>
+<div class="card"><div class="label">Genres</div><div id="genres" class="metric">—</div></div>
+<div class="card"><div class="label">Artists</div><div id="artists" class="metric">—</div></div>
+<div class="card"><div class="label">Average Popularity</div><div id="popularity" class="metric">—</div></div>
+</div>
+
+<section class="section">
+<h2>🔎 Song Recommendation</h2>
+<div id="selected" class="card">Search for a song/artist, select a match, then click <b>Recommend Songs</b>.</div>
+<div id="recommendations" class="recommendations" style="margin-top:14px"></div>
+</section>
+
+<section class="section">
+<h2>📊 Data Analysis & Visualizations</h2>
+<div class="charts">
+<div class="card chartbox"><canvas id="genreChart"></canvas></div>
+<div class="card chartbox"><canvas id="subgenreChart"></canvas></div>
+<div class="card chartbox"><canvas id="playlistChart"></canvas></div>
+<div class="card chartbox"><canvas id="featureChart"></canvas></div>
+<div class="card chartbox"><canvas id="scatterChart"></canvas></div>
+<div class="card chartbox"><canvas id="clusterChart"></canvas></div>
+</div>
+</section>
+
+<section class="section">
+<h2>🧩 Correlation Matrix</h2>
+<div class="card corrwrap"><div id="corrTable"></div></div>
+</section>
+
+<section class="section">
+<h2>🎧 Dataset Explorer</h2>
+<div class="tablewrap"><table><thead><tr><th>Track</th><th>Artist</th><th>Genre</th><th>Subgenre</th><th>Popularity</th><th>Danceability</th><th>Energy</th></tr></thead><tbody id="tableBody"></tbody></table></div>
+</section>
+</main>
+<footer>Spotify Songs’ Genre Segmentation • Academic project</footer>
+
+<script>
+let data=[],selected=null,charts=[];
+const featureNames=['danceability','energy','speechiness','acousticness','instrumentalness','liveness','valence','tempo','loudness','track_popularity'];
+const $=id=>document.getElementById(id);
+const num=(v,d=0)=>{const n=Number(v);return Number.isFinite(n)?n:d};
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function mean(key){return data.reduce((s,x)=>s+num(x[key]),0)/Math.max(1,data.length)}
+function meanArr(a){return a.reduce((s,x)=>s+x,0)/Math.max(1,a.length)}
+function counts(arr,key,n=10){const m={};arr.forEach(x=>{const k=x[key]||'Unknown';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n)}
+function destroyCharts(){charts.forEach(c=>c.destroy());charts=[]}
+function makeChart(id,type,labels,values,label){
+ charts.push(new Chart($(id),{type,data:{labels,datasets:[{label,data:values,borderWidth:1}]},options:{responsive:true,plugins:{legend:{display:type!=='bar'}}}}))
+}
+function renderMetrics(){
+ $('songs').textContent=data.length.toLocaleString();
+ $('genres').textContent=new Set(data.map(x=>x.playlist_genre).filter(Boolean)).size;
+ $('artists').textContent=new Set(data.map(x=>x.track_artist).filter(Boolean)).size.toLocaleString();
+ $('popularity').textContent=mean('track_popularity').toFixed(1);
+}
+function renderTable(rows=data.slice(0,100)){
+ $('tableBody').innerHTML=rows.map(x=>`<tr><td>${esc(x.track_name)}</td><td>${esc(x.track_artist)}</td><td>${esc(x.playlist_genre)}</td><td>${esc(x.playlist_subgenre)}</td><td>${num(x.track_popularity)}</td><td>${num(x.danceability).toFixed(3)}</td><td>${num(x.energy).toFixed(3)}</td></tr>`).join('');
+}
+function corr(a,b){
+ const ma=meanArr(a),mb=meanArr(b);let n=0,d1=0,d2=0;
+ for(let i=0;i<a.length;i++){const x=a[i]-ma,y=b[i]-mb;n+=x*y;d1+=x*x;d2+=y*y}
+ return n/Math.sqrt(d1*d2||1)
+}
+function renderCorrelation(){
+ let h='<table class="corr"><tr><th></th>'+featureNames.map(f=>`<th>${f.replace('_',' ')}</th>`).join('')+'</tr>';
+ const cols=Object.fromEntries(featureNames.map(f=>[f,data.map(x=>num(x[f]))]));
+ featureNames.forEach(a=>{
+  h+=`<tr><th class="rhead">${a.replace('_',' ')}</th>`;
+  featureNames.forEach(b=>{
+   const v=corr(cols[a],cols[b]);const alpha=Math.abs(v);const bg=v>=0?`rgba(30,215,96,${.12+.58*alpha})`:`rgba(230,70,70,${.12+.58*alpha})`;
+   h+=`<td style="background:${bg}">${v.toFixed(2)}</td>`;
+  });h+='</tr>';
+ });h+='</table>'; $('corrTable').innerHTML=h;
+}
+function kmeans(rows,k=5){
+ const sample=rows.slice(0,Math.min(5000,rows.length));
+ const fs=['danceability','energy','speechiness','acousticness','instrumentalness','liveness','valence'];
+ const mins={},maxs={};fs.forEach(f=>{const v=sample.map(x=>num(x[f]));mins[f]=Math.min(...v);maxs[f]=Math.max(...v)});
+ const norm=(v,f)=>maxs[f]===mins[f]?0:(v-mins[f])/(maxs[f]-mins[f]);
+ const pts=sample.map(x=>fs.map(f=>norm(num(x[f]),f)));
+ let centers=pts.filter((_,i)=>i%(Math.max(1,Math.floor(pts.length/k)))===0).slice(0,k);
+ while(centers.length<k)centers.push(pts[Math.floor(Math.random()*pts.length)]);
+ let labels=[];
+ for(let it=0;it<12;it++){
+  labels=pts.map(p=>{let bi=0,bd=Infinity;centers.forEach((c,j)=>{let d=0;for(let q=0;q<p.length;q++)d+=(p[q]-c[q])**2;if(d<bd){bd=d;bi=j}});return bi});
+  centers=centers.map((c,j)=>{const g=pts.filter((_,i)=>labels[i]===j);if(!g.length)return c;return c.map((_,q)=>g.reduce((s,p)=>s+p[q],0)/g.length)});
+ }
+ return labels;
+}
+function renderCharts(){
+ destroyCharts();
+ const g=counts(data,'playlist_genre',10);makeChart('genreChart','bar',g.map(x=>x[0]),g.map(x=>x[1]),'Songs');
+ const sg=counts(data,'playlist_subgenre',10);makeChart('subgenreChart','bar',sg.map(x=>x[0]),sg.map(x=>x[1]),'Songs');
+ const pl=counts(data,'playlist_name',10);makeChart('playlistChart','bar',pl.map(x=>x[0]),pl.map(x=>x[1]),'Songs');
+ const fs=['danceability','energy','speechiness','acousticness','instrumentalness','liveness','valence'];makeChart('featureChart','bar',fs,fs.map(f=>mean(f)),'Average');
+ const sample=data.filter((_,i)=>i%30===0).slice(0,1100);
+ charts.push(new Chart($('scatterChart'),{type:'scatter',data:{datasets:[{label:'Energy vs Danceability',data:sample.map(x=>({x:num(x.danceability),y:num(x.energy)})),pointRadius:2}]},options:{scales:{x:{title:{display:true,text:'Danceability'},min:0,max:1},y:{title:{display:true,text:'Energy'},min:0,max:1}}}}));
+ const labels=kmeans(data,5),sizes=Array(5).fill(0);labels.forEach(x=>sizes[x]++);
+ makeChart('clusterChart','bar',sizes.map((_,i)=>`Cluster ${i+1}`),sizes,'Songs');
+ renderCorrelation();
+}
+function searchSongs(q){
+ if(!q){renderTable();selected=null;$('selected').innerHTML='Search for a song/artist, select a match, then click <b>Recommend Songs</b>.';return}
+ const r=data.filter(x=>`${x.track_name} ${x.track_artist}`.toLowerCase().includes(q.toLowerCase())).slice(0,50);
+ renderTable(r);
+ if(r.length){selected=r[0];$('selected').innerHTML=`Selected: <b>${esc(selected.track_name)}</b> — ${esc(selected.track_artist)} <button class="secondary" onclick="recommend()">Recommend similar songs</button>`}
+ else{$('selected').textContent='No matching song found.';selected=null}
+}
+function distance(a,b){
+ const fs=['danceability','energy','speechiness','acousticness','instrumentalness','liveness','valence','tempo','loudness'];
+ const ranges={danceability:1,energy:1,speechiness:1,acousticness:1,instrumentalness:1,liveness:1,valence:1,tempo:220,loudness:40};
+ return Math.sqrt(fs.reduce((s,f)=>s+((num(a[f])-num(b[f]))/ranges[f])**2,0));
+}
+function recommend(){
+ if(!selected){$('selected').textContent='Search for a song first.';return}
+ const rec=data.filter(x=>x.track_id!==selected.track_id).map(x=>({x,d:distance(selected,x)})).sort((a,b)=>a.d-b.d).slice(0,8);
+ $('recommendations').innerHTML=rec.map((r,i)=>`<div class="song"><strong>${i+1}. ${esc(r.x.track_name)}</strong><span>${esc(r.x.track_artist)} • ${esc(r.x.playlist_genre)} • similarity ${(100/(1+r.d)).toFixed(1)}%</span></div>`).join('');
+ $('selected').innerHTML=`Selected: <b>${esc(selected.track_name)}</b> — ${esc(selected.track_artist)}<br><span class="label">Recommendations use audio-feature similarity across the dataset.</span>`;
+}
+$('search').addEventListener('input',e=>searchSongs(e.target.value));
+$('recommendBtn').addEventListener('click',recommend);
+$('resetBtn').addEventListener('click',()=>{$('search').value='';searchSongs('');$('recommendations').innerHTML=''});
+Papa.parse('spotify_dataset.csv',{download:true,header:true,skipEmptyLines:true,complete:r=>{
+ data=r.data.filter(x=>x.track_name);
+ $('status').innerHTML=`<span class="badge">Dataset loaded</span> ${data.length.toLocaleString()} songs`;
+ $('search').disabled=false;$('recommendBtn').disabled=false;renderMetrics();renderCharts();renderTable();
+},error:e=>{$('status').innerHTML=`<span class="error">Could not load spotify_dataset.csv. Upload the CSV beside index.html in this repository.</span>`;}});
+</script>
+</body>
+</html>
